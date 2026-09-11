@@ -1,0 +1,78 @@
+{%- set machines = [
+  {
+    'name': 'Washer',
+    'status': 'sensor.washer_state',
+    'time': 'sensor.washing_machine_remaining_time',
+    'kind': 'minutes',
+    'attention_text': 'ready to unload',
+    'attention_hours': 0
+  },
+  {
+    'name': 'Dryer',
+    'status': 'sensor.dryer_state',
+    'time': 'sensor.tumble_dryer_remaining_time',
+    'kind': 'minutes',
+    'attention_text': 'ready to unload',
+    'attention_hours': 0
+  },
+  {
+    'name': 'MK4S',
+    'status': 'sensor.mk4s_state',
+    'time': 'sensor.mk4s_print_finish',
+    'kind': 'timestamp',
+    'attention_text': 'print finished',
+    'attention_hours': 2
+  },
+  {
+    'name': 'X1C',
+    'status': 'sensor.x1c_state',
+    'time': 'sensor.x1c_end_time',
+    'kind': 'timestamp',
+    'attention_text': 'print finished',
+    'attention_hours': 2
+  },
+  {
+    'name': 'R58',
+    'status': 'sensor.r58_state',
+    'time': '',
+    'kind': 'none',
+    'running_text': 'heating',
+    'attention_text': 'up to temperature',
+    'attention_hours': 2
+  }
+] -%}
+{%- set stale_after = 15 -%}
+{%- set ns = namespace(loud = [], soft = []) -%}
+{%- for m in machines -%}
+  {%- set state = states(m.status) -%}
+  {%- set sobj = states[m.status] -%}
+  {%- set obj = none if m.kind == 'none' else states[m.time] -%}
+  {%- if state == 'attention' -%}
+    {%- set held = 0 if sobj is none else (now() - sobj.last_changed).total_seconds() / 3600 -%}
+    {%- if m.attention_hours == 0 or held < m.attention_hours -%}
+      {%- set ns.loud = ns.loud + ['# ' ~ m.name ~ ' — ' ~ m.attention_text] -%}
+    {%- endif -%}
+  {%- elif state == 'running' -%}
+    {%- if m.kind == 'none' -%}
+      {%- set known = false -%}
+      {%- set mins = 0 -%}
+    {%- elif m.kind == 'minutes' -%}
+      {%- set raw = states(m.time) -%}
+      {%- set known = raw not in ['unknown', 'unavailable', 'none', ''] -%}
+      {%- set mins = raw | int(0) -%}
+    {%- else -%}
+      {%- set finish = as_timestamp(states(m.time), 0) -%}
+      {%- set known = finish > 0 -%}
+      {%- set mins = ((finish - as_timestamp(now())) / 60) | round(0) | int -%}
+    {%- endif -%}
+    {%- set fresh = true if obj is none else (now() - obj.last_reported).total_seconds() < (stale_after * 60) -%}
+    {%- set label = m.running_text if m.kind == 'none' else ('time unknown' if not known else ('any moment' if mins < 1 else mins ~ ' min')) -%}
+    {%- set warn = '' if fresh else ' *· not updating*' -%}
+    {%- set ns.soft = ns.soft + ['## ' ~ m.name ~ ' **' ~ label ~ '**' ~ warn] -%}
+  {%- endif -%}
+{%- endfor -%}
+{%- if ns.loud or ns.soft -%}
+{{ (ns.loud + ns.soft) | join('\n\n') }}
+{%- else -%}
+### All idle
+{%- endif -%}
